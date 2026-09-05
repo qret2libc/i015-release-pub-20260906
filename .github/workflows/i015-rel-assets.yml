@@ -19,6 +19,7 @@ jobs:
           VIS="pub"
           SHA="$GITHUB_SHA"
           API="https://api.github.com/repos/$REPO"
+          UP="https://uploads.github.com/repos/$REPO"
           H=(-H "Authorization: Bearer $GT" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json")
 
           # distinct annotated tag object/ref under a new name (previous attempt clashed with lightweight tag)
@@ -50,8 +51,8 @@ jobs:
             esac
             ok=0
             for try in 1 2 3 4 5 6; do
-              code=$(curl -sS -o /tmp/up.json -w '%{http_code}' -H "Authorization: Bearer $GT" -H "Accept: application/vnd.github+json" -H "Content-Type: application/octet-stream" --data-binary @"$file" "$API/releases/$rid/assets?name=$aname")
-              echo "I015ASSET upload rid=$rid aname=$aname try=$try code=$code"
+              code=$(curl -sS -o /tmp/up.json -w '%{http_code}' -H "Authorization: Bearer $GT" -H "Accept: application/vnd.github+json" -H "Content-Type: application/octet-stream" --data-binary @"$file" "$UP/releases/$rid/assets?name=$aname")
+              echo "I015ASSET upload host=uploads rid=$rid aname=$aname try=$try code=$code"
               if [ "$code" = "201" ]; then
                 jq -c '{id, name, label, size, browser_download_url, state, created_at, updated_at}' /tmp/up.json 2>/dev/null
                 ok=1
