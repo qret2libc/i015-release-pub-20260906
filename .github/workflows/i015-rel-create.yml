@@ -1,0 +1,112 @@
+name: i015-rel-create-pub
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GT: ${{ github.token }}
+    steps:
+      - name: create tags, releases, assets
+        run: |
+          set -u
+          REPO="$GITHUB_REPOSITORY"
+          VIS="pub"
+          SHA="$GITHUB_SHA"
+          API="https://api.github.com/repos/$REPO"
+          H=(-H "Authorization: Bearer $GT" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json")
+          echo "I015META repo=$REPO vis=$VIS sha=$SHA"
+
+          # --- repo meta from repo-scoped token (owner-equivalent API view) ---
+          code=$(curl -sS -o /tmp/repo_meta.json -w '%{http_code}' "${H[@]}" "$API")
+          echo "I015META repo_meta_code=$code"
+          jq -c '{id, full_name, private, default_branch}' /tmp/repo_meta.json 2>/dev/null || true
+
+          # --- lightweight git refs ---
+          for tag in v1.0.0-i015-pub-20260906 v2.0.0-rc-i015-pub-20260906 draft-tag-i015-pub-20260906 plain-tag-i015-pub-20260906 annot-i015-pub-20260906; do
+            code=$(curl -sS -o /tmp/ref_$tag.json -w '%{http_code}' "${H[@]}" -X POST "$API/git/refs" -d '{"ref":"refs/tags/'"$tag"'","sha":"'"$SHA"'"}')
+            echo "I015TAG lightweight $tag code=$code"
+            jq -c '{ref, object}' /tmp/ref_$tag.json 2>/dev/null || true
+          done
+
+          # --- annotated tag object + ref ---
+          code=$(curl -sS -o /tmp/annot_obj.json -w '%{http_code}' "${H[@]}" -X POST "$API/git/tags" -d '{"tag":"annot-i015-'"$VIS"'-20260906","message":"i015 annotated tag probe '"$VIS"' 20260906","object":"'"$SHA"'","type":"commit"}')
+          echo "I015TAG annotated_object code=$code"
+          T=$(jq -r '.sha // empty' /tmp/annot_obj.json 2>/dev/null)
+          echo "I015TAG annotated_object_sha=$T"
+          if [ -n "$T" ]; then
+            code=$(curl -sS -o /tmp/ref_annot.json -w '%{http_code}' "${H[@]}" -X POST "$API/git/refs" -d '{"ref":"refs/tags/annot-i015-'"$VIS"'-20260906","sha":"'"$T"'"}')
+            echo "I015TAG annotated_ref code=$code"
+            jq -c . /tmp/ref_annot.json 2>/dev/null || true
+          fi
+
+          # --- asset payloads ---
+          printf 'i015 %s normal asset
+flag{i015-%s-asset-normal-20260906}
+synthetic: ghp_DUMMY_i015_%s_normal
+' "$VIS" "$VIS" "$VIS" > /tmp/normal-$VIS.txt
+          printf 'i015 %s prerelease asset
+flag{i015-%s-asset-prerelease-20260906}
+synthetic: ghp_DUMMY_i015_%s_rc
+' "$VIS" "$VIS" "$VIS" > /tmp/prerelease-$VIS.txt
+          printf 'i015 %s draft(existing-tag) asset
+flag{i015-%s-asset-draft-existingtag-20260906}
+synthetic: ghp_DUMMY_i015_%s_draft1
+' "$VIS" "$VIS" "$VIS" > /tmp/draft-$VIS.txt
+          printf 'i015 %s draft(no-tag) asset
+flag{i015-%s-asset-draft-notag-20260906}
+synthetic: ghp_DUMMY_i015_%s_draft2
+' "$VIS" "$VIS" "$VIS" > /tmp/draftnotag-$VIS.txt
+
+          mkrel() {
+            tag="$1"; name="$2"; draft="$3"; prere="$4"; marker="$5"; out="$6"
+            printf 'i015 %s release probe
+marker: %s
+synthetic: ghp_DUMMY_i015_%s
+' "$VIS" "$marker" "$VIS" > /tmp/rel_body.txt
+            jq -n --arg tag "$tag" --arg sha "$SHA" --arg name "$name" --rawfile body /tmp/rel_body.txt --argjson draft "$draft" --argjson prere "$prere" '{tag_name:$tag,target_commitish:$sha,name:$name,body:$body,draft:$draft,prerelease:$prere}' > /tmp/rel_body.json
+            code=$(curl -sS -o "$out" -w '%{http_code}' "${H[@]}" -X POST "$API/releases" --data-binary @/tmp/rel_body.json)
+            echo "I015REL create tag=$tag draft=$draft prerelease=$prere code=$code out=$out"
+            jq -c '{id, tag_name, name, draft, prerelease, created_at, html_url, assets}' "$out" 2>/dev/null || head -c 600 "$out"
+          }
+
+          mkrel "v1.0.0-i015-$VIS-20260906" "i015 normal release $VIS 20260906" false false "flag{i015-$VIS-normal-release-body-20260906}" /tmp/rel_normal.json
+          mkrel "v2.0.0-rc-i015-$VIS-20260906" "i015 prerelease $VIS 20260906" false true "flag{i015-$VIS-prerelease-body-20260906}" /tmp/rel_rc.json
+          mkrel "draft-tag-i015-$VIS-20260906" "i015 draft existing-tag $VIS 20260906" true false "flag{i015-$VIS-draft-body-existingtag-20260906}" /tmp/rel_draft1.json
+          mkrel "draft-notag-i015-$VIS-20260906" "i015 draft no-tag $VIS 20260906" true false "flag{i015-$VIS-draft-body-notag-20260906}" /tmp/rel_draft2.json
+
+          upasset() {
+            rid="$1"; file="$2"
+            code=$(curl -sS -o /tmp/asset_$rid.json -w '%{http_code}' -H "Authorization: Bearer $GT" -H "Accept: application/vnd.github+json" -H "Content-Type: application/octet-stream" --data-binary @"$file" "$API/releases/$rid/assets?name=$(basename "$file")")
+            echo "I015ASSET upload release=$rid file=$(basename "$file") code=$code"
+            jq -c '{id, name, label, size, browser_download_url, state, created_at, updated_at}' /tmp/asset_$rid.json 2>/dev/null || head -c 600 /tmp/asset_$rid.json
+          }
+
+          for rid in $(jq -r '.id // empty' /tmp/rel_normal.json) ; do upasset "$rid" "/tmp/normal-$VIS.txt"; done
+          for rid in $(jq -r '.id // empty' /tmp/rel_rc.json) ; do upasset "$rid" "/tmp/prerelease-$VIS.txt"; done
+          for rid in $(jq -r '.id // empty' /tmp/rel_draft1.json) ; do upasset "$rid" "/tmp/draft-$VIS.txt"; done
+          for rid in $(jq -r '.id // empty' /tmp/rel_draft2.json) ; do upasset "$rid" "/tmp/draftnotag-$VIS.txt"; done
+
+          echo "=====I015_OWNER_VIEW_START====="
+          code=$(curl -sS -o /tmp/releases.json -w '%{http_code}' "${H[@]}" "$API/releases?per_page=100")
+          echo "I015OWNER releases_list code=$code"
+          jq -c 'map({id, tag_name, name, draft, prerelease, created_at, author: .author.login, assets: [.assets[] | {id, name, browser_download_url}]})' /tmp/releases.json 2>/dev/null || head -c 800 /tmp/releases.json
+          code=$(curl -sS -o /tmp/latest.json -w '%{http_code}' "${H[@]}" "$API/releases/latest")
+          echo "I015OWNER latest code=$code tag=$(jq -r '.tag_name // empty' /tmp/latest.json 2>/dev/null)"
+          for tag in v1.0.0-i015-pub-20260906 v2.0.0-rc-i015-pub-20260906 draft-tag-i015-pub-20260906 plain-tag-i015-pub-20260906 annot-i015-pub-20260906 draft-notag-i015-$VIS-20260906; do
+            code=$(curl -sS -o /tmp/rt_$tag.json -w '%{http_code}' "${H[@]}" "$API/releases/tags/$tag")
+            echo "I015OWNER releases/tags/$tag code=$code id=$(jq -r '.id // empty' /tmp/rt_$tag.json 2>/dev/null) draft=$(jq -r '.draft // empty' /tmp/rt_$tag.json 2>/dev/null)"
+          done
+          code=$(curl -sS -o /tmp/tags.json -w '%{http_code}' "${H[@]}" "$API/tags?per_page=100")
+          echo "I015OWNER tags_list code=$code"
+          jq -c 'map({name, commit: .commit.sha})' /tmp/tags.json 2>/dev/null || head -c 800 /tmp/tags.json
+          code=$(curl -sS -o /tmp/refs_tags.json -w '%{http_code}' "${H[@]}" "$API/git/refs/tags")
+          echo "I015OWNER git_refs_tags code=$code"
+          jq -c 'map({ref, type: .object.type, sha: .object.sha})' /tmp/refs_tags.json 2>/dev/null || head -c 800 /tmp/refs_tags.json
+          echo "=====I015_OWNER_VIEW_END====="
