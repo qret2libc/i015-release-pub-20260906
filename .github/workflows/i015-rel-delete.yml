@@ -1,0 +1,40 @@
+name: i015-rel-delete-pub
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GT: ${{ github.token }}
+    steps:
+      - name: delete releases and tags
+        run: |
+          set -u
+          REPO="$GITHUB_REPOSITORY"
+          VIS="pub"
+          API="https://api.github.com/repos/$REPO"
+          H=(-H "Authorization: Bearer $GT" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json")
+          curl -sS -o /tmp/releases.json "${H[@]}" "$API/releases?per_page=100"
+          echo "I015DELETE releases_before=$(jq 'length' /tmp/releases.json 2>/dev/null)"
+          for rid in $(jq -r '.[].id' /tmp/releases.json 2>/dev/null); do
+            code=$(curl -sS -o /tmp/del_$rid.json -w '%{http_code}' -X DELETE "${H[@]}" "$API/releases/$rid")
+            echo "I015DELETE release rid=$rid code=$code"
+          done
+          for tag in v1.0.0-i015-pub-20260906 v2.0.0-rc-i015-pub-20260906 draft-tag-i015-pub-20260906 draft-notag-i015-pub-20260906 plain-tag-i015-pub-20260906 annot-i015-pub-20260906 annotobj-i015-pub-20260906; do
+            code=$(curl -sS -o /tmp/deltag.json -w '%{http_code}' -X DELETE "${H[@]}" "$API/git/refs/tags/$tag")
+            echo "I015DELETE tag $tag code=$code"
+          done
+          sleep 5
+          echo "=====I015_DELETE_VIEW_START====="
+          code=$(curl -sS -o /tmp/rel_after.json -w '%{http_code}' "${H[@]}" "$API/releases?per_page=100")
+          echo "I015DELETE releases_after code=$code body=$(head -c 200 /tmp/rel_after.json | tr -d '\n')"
+          code=$(curl -sS -o /tmp/tags_after.json -w '%{http_code}' "${H[@]}" "$API/tags?per_page=100")
+          echo "I015DELETE tags_after code=$code body=$(head -c 200 /tmp/tags_after.json | tr -d '\n')"
+          code=$(curl -sS -o /tmp/refs_after.json -w '%{http_code}' "${H[@]}" "$API/git/refs/tags")
+          echo "I015DELETE refs_tags_after code=$code body=$(head -c 200 /tmp/refs_after.json | tr -d '\n')"
+          echo "=====I015_DELETE_VIEW_END====="
