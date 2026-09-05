@@ -47,29 +47,14 @@ jobs:
           fi
 
           # --- asset payloads ---
-          printf 'i015 %s normal asset
-flag{i015-%s-asset-normal-20260906}
-synthetic: ghp_DUMMY_i015_%s_normal
-' "$VIS" "$VIS" "$VIS" > /tmp/normal-$VIS.txt
-          printf 'i015 %s prerelease asset
-flag{i015-%s-asset-prerelease-20260906}
-synthetic: ghp_DUMMY_i015_%s_rc
-' "$VIS" "$VIS" "$VIS" > /tmp/prerelease-$VIS.txt
-          printf 'i015 %s draft(existing-tag) asset
-flag{i015-%s-asset-draft-existingtag-20260906}
-synthetic: ghp_DUMMY_i015_%s_draft1
-' "$VIS" "$VIS" "$VIS" > /tmp/draft-$VIS.txt
-          printf 'i015 %s draft(no-tag) asset
-flag{i015-%s-asset-draft-notag-20260906}
-synthetic: ghp_DUMMY_i015_%s_draft2
-' "$VIS" "$VIS" "$VIS" > /tmp/draftnotag-$VIS.txt
+          printf 'i015 %s normal asset\nflag{i015-%s-asset-normal-20260906}\nsynthetic: ghp_DUMMY_i015_%s_normal\n' "$VIS" "$VIS" "$VIS" > /tmp/normal-$VIS.txt
+          printf 'i015 %s prerelease asset\nflag{i015-%s-asset-prerelease-20260906}\nsynthetic: ghp_DUMMY_i015_%s_rc\n' "$VIS" "$VIS" "$VIS" > /tmp/prerelease-$VIS.txt
+          printf 'i015 %s draft(existing-tag) asset\nflag{i015-%s-asset-draft-existingtag-20260906}\nsynthetic: ghp_DUMMY_i015_%s_draft1\n' "$VIS" "$VIS" "$VIS" > /tmp/draft-$VIS.txt
+          printf 'i015 %s draft(no-tag) asset\nflag{i015-%s-asset-draft-notag-20260906}\nsynthetic: ghp_DUMMY_i015_%s_draft2\n' "$VIS" "$VIS" "$VIS" > /tmp/draftnotag-$VIS.txt
 
           mkrel() {
             tag="$1"; name="$2"; draft="$3"; prere="$4"; marker="$5"; out="$6"
-            printf 'i015 %s release probe
-marker: %s
-synthetic: ghp_DUMMY_i015_%s
-' "$VIS" "$marker" "$VIS" > /tmp/rel_body.txt
+            printf 'i015 %s release probe\nmarker: %s\nsynthetic: ghp_DUMMY_i015_%s\n' "$VIS" "$marker" "$VIS" > /tmp/rel_body.txt
             jq -n --arg tag "$tag" --arg sha "$SHA" --arg name "$name" --rawfile body /tmp/rel_body.txt --argjson draft "$draft" --argjson prere "$prere" '{tag_name:$tag,target_commitish:$sha,name:$name,body:$body,draft:$draft,prerelease:$prere}' > /tmp/rel_body.json
             code=$(curl -sS -o "$out" -w '%{http_code}' "${H[@]}" -X POST "$API/releases" --data-binary @/tmp/rel_body.json)
             echo "I015REL create tag=$tag draft=$draft prerelease=$prere code=$code out=$out"
