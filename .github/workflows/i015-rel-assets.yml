@@ -1,7 +1,5 @@
 name: i015-rel-assets-pub
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
 permissions:
   contents: write
