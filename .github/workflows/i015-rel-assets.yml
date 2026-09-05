@@ -1,0 +1,70 @@
+name: i015-rel-assets-pub
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GT: ${{ github.token }}
+    steps:
+      - name: attach assets (retry on transient 404)
+        run: |
+          set -u
+          REPO="$GITHUB_REPOSITORY"
+          VIS="pub"
+          SHA="$GITHUB_SHA"
+          API="https://api.github.com/repos/$REPO"
+          H=(-H "Authorization: Bearer $GT" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json")
+
+          # distinct annotated tag object/ref under a new name (previous attempt clashed with lightweight tag)
+          code=$(curl -sS -o /tmp/annot2_obj.json -w '%{http_code}' "${H[@]}" -X POST "$API/git/tags" -d '{"tag":"annotobj-i015-'"$VIS"'-20260906","message":"i015 annotated tag object probe '"$VIS"' 20260906","object":"'"$SHA"'","type":"commit"}')
+          echo "I015TAG annotobj_object code=$code"
+          T=$(jq -r '.sha // empty' /tmp/annot2_obj.json 2>/dev/null)
+          echo "I015TAG annotobj_object_sha=$T"
+          if [ -n "$T" ]; then
+            code=$(curl -sS -o /tmp/ref_annot2.json -w '%{http_code}' "${H[@]}" -X POST "$API/git/refs" -d '{"ref":"refs/tags/annotobj-i015-'"$VIS"'-20260906","sha":"'"$T"'"}')
+            echo "I015TAG annotobj_ref code=$code"
+            jq -c . /tmp/ref_annot2.json 2>/dev/null || true
+          fi
+
+          printf 'i015 %s normal asset\nflag{i015-%s-asset-normal-20260906}\nsynthetic: ghp_DUMMY_i015_%s_normal\n' "$VIS" "$VIS" "$VIS" > /tmp/normal-$VIS.txt
+          printf 'i015 %s prerelease asset\nflag{i015-%s-asset-prerelease-20260906}\nsynthetic: ghp_DUMMY_i015_%s_rc\n' "$VIS" "$VIS" "$VIS" > /tmp/prerelease-$VIS.txt
+          printf 'i015 %s draft(existing-tag) asset\nflag{i015-%s-asset-draft-existingtag-20260906}\nsynthetic: ghp_DUMMY_i015_%s_draft1\n' "$VIS" "$VIS" "$VIS" > /tmp/draft-$VIS.txt
+          printf 'i015 %s draft(no-tag) asset\nflag{i015-%s-asset-draft-notag-20260906}\nsynthetic: ghp_DUMMY_i015_%s_draft2\n' "$VIS" "$VIS" "$VIS" > /tmp/draftnotag-$VIS.txt
+
+          curl -sS -o /tmp/releases.json "${H[@]}" "$API/releases?per_page=100"
+          for tag in v1.0.0-i015-$VIS-20260906 v2.0.0-rc-i015-$VIS-20260906 draft-tag-i015-$VIS-20260906 draft-notag-i015-$VIS-20260906; do
+            rid=$(jq -r --arg t "$tag" '.[] | select(.tag_name == $t) | .id' /tmp/releases.json | head -1)
+            echo "I015ASSET target tag=$tag rid=$rid"
+            if [ -z "$rid" ]; then continue; fi
+            case "$tag" in
+              v1.0.0*) file="/tmp/normal-$VIS.txt"; aname="normal-$VIS.txt";;
+              v2.0.0*) file="/tmp/prerelease-$VIS.txt"; aname="prerelease-$VIS.txt";;
+              draft-tag*) file="/tmp/draft-$VIS.txt"; aname="draft-$VIS.txt";;
+              draft-notag*) file="/tmp/draftnotag-$VIS.txt"; aname="draftnotag-$VIS.txt";;
+            esac
+            ok=0
+            for try in 1 2 3 4 5 6; do
+              code=$(curl -sS -o /tmp/up.json -w '%{http_code}' -H "Authorization: Bearer $GT" -H "Accept: application/vnd.github+json" -H "Content-Type: application/octet-stream" --data-binary @"$file" "$API/releases/$rid/assets?name=$aname")
+              echo "I015ASSET upload rid=$rid aname=$aname try=$try code=$code"
+              if [ "$code" = "201" ]; then
+                jq -c '{id, name, label, size, browser_download_url, state, created_at, updated_at}' /tmp/up.json 2>/dev/null
+                ok=1
+                break
+              fi
+              head -c 300 /tmp/up.json; echo
+              sleep 10
+            done
+            echo "I015ASSET final rid=$rid aname=$aname ok=$ok"
+          done
+
+          echo "=====I015_ASSET_VIEW_START====="
+          code=$(curl -sS -o /tmp/releases2.json -w '%{http_code}' "${H[@]}" "$API/releases?per_page=100")
+          echo "I015ASSET releases_list_after code=$code"
+          jq -c 'map({id, tag_name, draft, prerelease, assets: [.assets[] | {id, name, size, browser_download_url, url}]})' /tmp/releases2.json 2>/dev/null
+          echo "=====I015_ASSET_VIEW_END====="
