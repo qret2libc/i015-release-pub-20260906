@@ -1,0 +1,39 @@
+name: i015-rel-publish-pub
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GT: ${{ github.token }}
+    steps:
+      - name: publish drafts and verify
+        run: |
+          set -u
+          REPO="$GITHUB_REPOSITORY"
+          VIS="pub"
+          API="https://api.github.com/repos/$REPO"
+          H=(-H "Authorization: Bearer $GT" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json")
+          curl -sS -o /tmp/releases.json "${H[@]}" "$API/releases?per_page=100"
+          for rid in $(jq -r '.[] | select(.draft == true and (.assets | length) > 0) | .id' /tmp/releases.json); do
+            code=$(curl -sS -o /tmp/pub_$rid.json -w '%{http_code}' -X PATCH "${H[@]}" "$API/releases/$rid" -d '{"draft":false}')
+            echo "I015PUBLISH patch rid=$rid code=$code tag=$(jq -r '.tag_name // empty' /tmp/pub_$rid.json 2>/dev/null) draft=$(jq -r '.draft // empty' /tmp/pub_$rid.json 2>/dev/null)"
+            jq -c '{id, tag_name, draft, prerelease, published_at, html_url, assets: [.assets[] | {id, name, browser_download_url}]}' /tmp/pub_$rid.json 2>/dev/null || head -c 500 /tmp/pub_$rid.json
+          done
+          sleep 8
+          echo "=====I015_PUBLISH_VIEW_START====="
+          code=$(curl -sS -o /tmp/after.json -w '%{http_code}' "${H[@]}" "$API/releases?per_page=100")
+          echo "I015PUBLISH releases_list code=$code"
+          jq -c 'map({id, tag_name, draft, prerelease, published_at, html_url})' /tmp/after.json 2>/dev/null
+          for tag in draft-tag-i015-$VIS-20260906 draft-notag-i015-$VIS-20260906 v1.0.0-i015-$VIS-20260906; do
+            code=$(curl -sS -o /tmp/rt.json -w '%{http_code}' "${H[@]}" "$API/releases/tags/$tag")
+            echo "I015PUBLISH releases/tags/$tag code=$code id=$(jq -r '.id // empty' /tmp/rt.json 2>/dev/null)"
+            code2=$(curl -sS -o /tmp/rf.json -w '%{http_code}' "${H[@]}" "$API/git/ref/tags/$tag")
+            echo "I015PUBLISH git/ref/tags/$tag code=$code2 sha=$(jq -r '.object.sha // empty' /tmp/rf.json 2>/dev/null)"
+          done
+          echo "=====I015_PUBLISH_VIEW_END====="
